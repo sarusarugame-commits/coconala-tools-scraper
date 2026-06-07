@@ -18,6 +18,10 @@ output/
 scraper_cloakbrowser_backup.py
 requirements_cloakbrowser_backup.txt
 
+# seed/ は GitHub Actions 用のシードデータ（コミット対象）
+# !seed/
+# 上記は seed/ を含めても除外しない設定（Git は "!pattern" で再包含可能）
+
 # テスト用一時スクリプト
 inspect_*.py
 test_*.py

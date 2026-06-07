@@ -37,11 +37,24 @@ jobs:
           python -c "import DrissionPage; print('DrissionPage OK')"
           python -c "from DrissionPage import ChromiumPage, ChromiumOptions; print('Imports OK')"
 
+      - name: "Restore seed data (skip already-fetched URLs)"
+        run: |
+          mkdir -p output
+          # ローカルで集めた data_cache_w*.json を output/ にコピー
+          # ワーカーは起動時に自分のファイルを読み込んで既取得 URL をスキップする
+          if ls seed/data_cache_w*.json 1> /dev/null 2>&1; then
+            cp -n seed/data_cache_w*.json output/
+            echo "Seed restored:"
+            ls -la output/data_cache_w*.json
+          else
+            echo "No seed data found, will fetch all URLs."
+          fi
+
       - name: "Phase 1 - URL collect"
         run: python scraper.py --collect
 
-      - name: "Phase 2 - fetch services (parallel)"
-        run: python scraper.py --fetch --workers 3
+      - name: "Phase 2 - fetch services (parallel, 5 workers to match seed round-robin)"
+        run: python scraper.py --fetch --workers 5
 
       - name: "Phase 3 - generate Excel"
         run: python scraper.py --excel
