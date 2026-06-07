@@ -5,9 +5,14 @@
 - 販売実績数が MIN_SALES を超えるもののみ Excel に出力
 
 [DrissionPage 使用]
-- 実 Chromium ブラウザで stealth 自動化
+- 実 Chromium / Edge ブラウザで stealth 自動化
 - サーバーバーデン軽減のため、間隔ジッタ (4±2秒) + no_imgs
 - ページネーション/個別ページ共にステートレスに逐次 + 並列
+
+[リトライ方針: 全廃]
+- 同じ IP で何度も叩くと Cloudflare のブロックが強化されるため、リトライは一切しない
+- 1回だけ試して 403/Forbidden を検知したら諦め、ログに残す
+- ネットワークエラー (timeout 等) も即諦め
 
 [再開機能]
 - 取得結果は cache.json に逐次保存
@@ -21,7 +26,8 @@
 
 [動作環境]
 - Linux/Windows/macOS。GitHub Actions (ubuntu-latest) でも動作。
-- システムに Chromium が必要（CI では apt-get install chromium-browser）
+- システムに Chromium / Edge が必要（CI では apt-get install chromium-browser）
+- Windows は Edge を優先（Chrome は --remote-debugging-port 互換性問題で DrissionPage から起動不可）
 """
 from __future__ import annotations
 
@@ -213,84 +219,74 @@ def get_total_count_from_page(page: ChromiumPage) -> int | None:
 
 def fetch_service(page: ChromiumPage, url: str) -> Service | None:
     """個別商品ページからタイトルと販売実績数を取得（コンテンツマーケット用）
-    403 Forbidden (Cloudflare JS challenge) の場合はリトライする。
+
+    【リトライなしポリシー】
+    同じ IP / ブラウザ指紋で何度も叩くと Cloudflare のブロックが強化されるため、
+    1回だけ試行して 403/Forbidden を検知したら即 None を返す。
     """
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        try:
-            page.get(url, timeout=TIMEOUT_S)
-        except Exception as e:
-            print(f"  [WARN] goto失敗 (attempt {attempt}): {url} ({e})")
-            time.sleep(2.0 * attempt)
-            continue
+    try:
+        page.get(url, timeout=TIMEOUT_S)
+    except Exception as e:
+        print(f"  [WARN] goto失敗: {url} ({e})")
+        return None
 
-        # og:title が出るか、403 じゃなくなるまで待つ（最大15秒）
-        deadline = time.time() + 15.0
-        got_title = False
-        while time.time() < deadline:
-            try:
-                og = page.ele('css:meta[property="og:title"]')
-                if og:
-                    content = og.attr("content") or ""
-                    if content and "403" not in content and "Forbidden" not in content:
-                        got_title = True
-                        break
-            except Exception:
-                pass
-            time.sleep(0.5)
-        if not got_title:
-            if attempt < max_attempts:
-                print(f"  [WARN] og:title未取得 (attempt {attempt})、リトライ")
-                time.sleep(2.0 * attempt)
-                continue
-            return None
-
-        # 「販売実績」テキストが出るまで追加で待つ（最大15秒）
+    # og:title が出るまで待つ（最大15秒）。403/Forbidden が出たら即諦め。
+    deadline = time.time() + 15.0
+    og_content = ""
+    got_valid_title = False
+    while time.time() < deadline:
         try:
-            page.wait.ele_displayed("text=販売実績", timeout=15)
+            og = page.ele('css:meta[property="og:title"]')
+            if og:
+                content = og.attr("content") or ""
+                if content:
+                    if "403" in content or "Forbidden" in content:
+                        print(f"  [403] {url}")
+                        return None
+                    og_content = content
+                    got_valid_title = True
+                    break
         except Exception:
             pass
         time.sleep(0.5)
 
-        # タイトル（og:title を優先）
-        title = ""
-        try:
-            og = page.ele('css:meta[property="og:title"]')
-            if og:
-                title = og.attr("content") or ""
-        except Exception:
-            pass
-        if not title or "403" in title or "Forbidden" in title:
-            title = page.title or ""
-        title = re.sub(r"\s*\|\s*ココナラコンテンツマーケット\s*$", "", title).strip()
-        title = re.sub(r"\s*\|\s*ココナラ\s*$", "", title).strip()
+    if not got_valid_title:
+        print(f"  [WARN] og:title未取得: {url}")
+        return None
 
-        # 403 のままなら失敗として返す
-        if "403" in title or "Forbidden" in title:
-            if attempt < max_attempts:
-                print(f"  [WARN] 403のまま (attempt {attempt})、リトライ")
-                time.sleep(2.5 * attempt)
-                continue
-            return None
+    # タイトル（og:title 優先、空なら page.title）
+    title = og_content or (page.title or "")
+    title = re.sub(r"\s*\|\s*ココナラコンテンツマーケット\s*$", "", title).strip()
+    title = re.sub(r"\s*\|\s*ココナラ\s*$", "", title).strip()
 
-        # 販売実績数: ページ本文から「販売実績 N件」(この商品の販売数) を抽出。
-        # ※「販売実績 0」(出品者プロファイル側の累計) は "件" が付かないので区別できる。
-        sales_count = 0
-        try:
-            text = page.run_js("() => document.body.innerText || ''") or ""
-            m = re.search(r"販売.{0,5}?([\d,]+)\s*件", text)
-            if not m:
-                m = re.search(r"販売.{0,5}?([\d,]+)", text)
-            if not m:
-                m = re.search(r"売上数\s*([\d,]+)", text)
-            if m:
-                sales_count = int(m.group(1).replace(",", ""))
-        except Exception:
-            pass
+    # page.title が 403 の場合の保険
+    if "403" in title or "Forbidden" in title:
+        print(f"  [403] {url}")
+        return None
 
-        return Service(title=title, sales_count=sales_count, url=url)
+    # 「販売実績」テキストが出るまで追加で待つ（最大15秒）
+    try:
+        page.wait.ele_displayed("text=販売実績", timeout=15)
+    except Exception:
+        pass
+    time.sleep(0.5)
 
-    return None
+    # 販売実績数: ページ本文から「販売実績 N件」(この商品の販売数) を抽出。
+    # ※「販売実績 0」(出品者プロファイル側の累計) は "件" が付かないので区別できる。
+    sales_count = 0
+    try:
+        text = page.run_js("() => document.body.innerText || ''") or ""
+        m = re.search(r"販売.{0,5}?([\d,]+)\s*件", text)
+        if not m:
+            m = re.search(r"販売.{0,5}?([\d,]+)", text)
+        if not m:
+            m = re.search(r"売上数\s*([\d,]+)", text)
+        if m:
+            sales_count = int(m.group(1).replace(",", ""))
+    except Exception:
+        pass
+
+    return Service(title=title, sales_count=sales_count, url=url)
 
 
 # ===== Excel 出力 =====
@@ -328,13 +324,12 @@ def save_to_excel(services: list[Service], path: Path) -> None:
 
 # ===== フェーズ =====
 def phase_collect(page: ChromiumPage) -> list[str]:
-    """フェーズ1: 検索結果から個別商品URLを収集"""
+    """フェーズ1: 検索結果から個別商品URLを収集（リトライなし）"""
     all_urls = load_urls()
     print(f"[COLLECT] 既存キャッシュ: {len(all_urls)} 件")
 
     total_reported: int | None = None  # ページヘッダーから取得した総件数
     empty_streak = 0  # 連続0件ページ数
-    collected_per_page: dict[int, int] = {}
 
     for page_num in range(1, MAX_PAGES + 1):
         url = build_search_url(KEYWORD, page_num)
@@ -346,19 +341,13 @@ def phase_collect(page: ChromiumPage) -> list[str]:
             polite_sleep()
             continue
 
-        # 商品カードがDOMに現れるまで待つ（最大45秒）。失敗時は1回リトライ。
-        got_cards = False
-        for _ in range(2):
-            try:
-                page.wait.ele_displayed(
-                    'css:a[href*="/contents_market/pictures/"], css:a[href*="/contents_market/articles/"]',
-                    timeout=45,
-                )
-                got_cards = True
-                break
-            except Exception:
-                time.sleep(1.5)
-        if not got_cards:
+        # 商品カードがDOMに現れるまで待つ（最大45秒、リトライなし）
+        try:
+            page.wait.ele_displayed(
+                'css:a[href*="/contents_market/pictures/"], css:a[href*="/contents_market/articles/"]',
+                timeout=45,
+            )
+        except Exception:
             print(f"  [WARN] 商品カードが見つかりません（JS読み込み遅延）次のページへ。")
             polite_sleep()
             continue
@@ -379,7 +368,6 @@ def phase_collect(page: ChromiumPage) -> list[str]:
         existing = set(all_urls)
         new_urls = [u for u in page_urls if u not in existing]
         all_urls.extend(new_urls)
-        collected_per_page[page_num] = len(new_urls)
         print(f"  → {len(new_urls)} 件取得（累計: {len(all_urls)}）")
 
         if len(new_urls) == 0:
@@ -391,37 +379,6 @@ def phase_collect(page: ChromiumPage) -> list[str]:
             empty_streak = 0
 
         polite_sleep()
-
-    # === 取りこぼしページのリトライ ===
-    max_visited = max(collected_per_page.keys(), default=0)
-    print(f"\n[RETRY] 取りこぼしページの再巡回 (1〜{max_visited})")
-    for retry_pn in range(1, max_visited + 1):
-        if collected_per_page.get(retry_pn, 0) >= 35:
-            continue
-        url = build_search_url(KEYWORD, retry_pn)
-        print(f"\n[再取得] ページ {retry_pn}: {url}")
-        try:
-            page.get(url, timeout=TIMEOUT_S)
-        except Exception as e:
-            print(f"  [WARN] goto失敗 ({e})")
-            continue
-        try:
-            page.wait.ele_displayed(
-                'css:a[href*="/contents_market/pictures/"], css:a[href*="/contents_market/articles/"]',
-                timeout=45,
-            )
-        except Exception:
-            print(f"  [WARN] タイムアウト")
-            continue
-        time.sleep(1.5)
-        page_urls = collect_service_urls_from_page(page)
-        if not page_urls:
-            continue
-        existing = set(all_urls)
-        new_urls = [u for u in page_urls if u not in existing]
-        all_urls.extend(new_urls)
-        print(f"  → {len(new_urls)} 件追加（累計: {len(all_urls)}）")
-        time.sleep(2.0)
 
     save_urls(all_urls)
     msg = f"\n[収集完了] 合計 {len(all_urls)} 件のサービスURL"
