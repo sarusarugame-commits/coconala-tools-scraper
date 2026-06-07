@@ -1,0 +1,66 @@
+name: Scrape Coconala Tools
+
+on:
+  workflow_dispatch:        # 手動実行のみ（自動スケジュールなし）
+  # schedule:
+  #   - cron: '0 3 * * 0'  # 毎週日曜 03:00 JST (任意: 自動実行したい場合コメント解除)
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360     # 6 時間（GitHub Actions 上限）
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Chromium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser xvfb
+          chromium --version
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: "Show environment"
+        run: |
+          python --version
+          python -c "import DrissionPage; print('DrissionPage OK')"
+          python -c "from DrissionPage import ChromiumPage, ChromiumOptions; print('Imports OK')"
+
+      - name: "Phase 1 - URL collect"
+        run: python scraper.py --collect
+
+      - name: "Phase 2 - fetch services (parallel)"
+        run: python scraper.py --fetch --workers 3
+
+      - name: "Phase 3 - generate Excel"
+        run: python scraper.py --excel
+
+      - name: "Upload Excel artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: coconala-tools-xlsx
+          path: output/coconala_tools.xlsx
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: "Upload cache files (debug / resume)"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coconala-cache
+          path: |
+            output/urls_cache.json
+            output/data_cache.json
+            output/data_cache_w*.json
+          retention-days: 7

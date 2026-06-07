@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# スクレイパー出力（cache、Excel、ログはリポジトリに含めない）
+output/
+*.log
+
+# バックアップ
+scraper_cloakbrowser_backup.py
+requirements_cloakbrowser_backup.txt
+
+# テスト用一時スクリプト
+inspect_*.py
+test_*.py
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
