@@ -264,29 +264,28 @@ def fetch_service(page: ChromiumPage, url: str) -> Service | None:
         print(f"  [403] {url}")
         return None
 
-    # 「販売実績」テキストが出るまで追加で待つ（最大15秒）
+    # 「販売実績」要素が出るまで追加で待つ（最大15秒）
     try:
         page.wait.ele_displayed("text=販売実績", timeout=15)
     except Exception:
         pass
     time.sleep(0.5)
 
-    # 販売実績数: ページ本文から「販売実績 N件」(この商品の販売数) を抽出。
-    # 重要: 「販売実績」を厳密にマッチ。出品者プロファイル側の累計 (例: 累計販売 3,000件) や
-    #       レビュー数・売上金額などは誤抽出の原因になるため除外。
+    # 販売実績数: 要素指定で取得
+    # ページ内の「販売実績 N件」要素（商品バッジ）を直接取得して、その text から数字を取り出す。
+    # body.innerText を regex で探すと、出品者プロファイルの累計など別要素を誤抽出するため、
+    # あくまで「販売実績」テキストを含む要素のみを対象にする。
     sales_count = 0
     try:
-        text = page.run_js("() => document.body.innerText || ''") or ""
-        # 1次: 「販売実績 N件」(この商品の販売数) - 厳密マッチ
-        m = re.search(r"販売実績\s*([\d,]+)\s*件", text)
-        # 2次: 「販売数 N件」「売上数 N」など別表現 (この商品用)
-        if not m:
-            m = re.search(r"販売数\s*([\d,]+)\s*件", text)
-        # 3次: 売上数 (金額ではなく販売件数の意味で使われている場合)
-        if not m:
-            m = re.search(r"売上数\s*([\d,]+)", text)
-        if m:
-            sales_count = int(m.group(1).replace(",", ""))
+        # 「販売実績」テキストを含む要素を全て取得
+        candidates = page.eles('text=販売実績')
+        for ele in candidates:
+            ele_text = (ele.text or "").strip()
+            # 「販売実績 N件」パターンにマッチ
+            m = re.search(r"販売実績\s*([\d,]+)\s*件", ele_text)
+            if m:
+                sales_count = int(m.group(1).replace(",", ""))
+                break
     except Exception:
         pass
 
