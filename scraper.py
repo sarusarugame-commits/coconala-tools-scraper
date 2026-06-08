@@ -92,9 +92,8 @@ def make_options() -> ChromiumOptions:
     co.set_argument("--disable-gpu")
     co.set_argument("--lang=ja-JP")
 
-    # ポート競合回避: ワーカーごとにランダムポートを使う
-    # （指定しないと 9333 など固定ポートが使われ、複数ワーカーで競合する）
-    co.set_local_port(0)
+    # ポートは DrissionPage のデフォルト (9333 から自動インクリメント) を使用
+    # set_local_port(0) はポート 0 を指定することになり、無効
 
     # 画像読み込み無効化（高速化 + サーバーバーデン軽減）
     co.no_imgs()
