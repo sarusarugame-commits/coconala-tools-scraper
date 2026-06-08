@@ -26,7 +26,9 @@ jobs:
           # snap 版 chromium があれば削除
           sudo snap remove chromium 2>/dev/null || true
           # Google Chrome (deb版) をインストール
-          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+          wget -q https://dl.google.com/linux/linux_signing_key.pub -O /tmp/google-chrome.key
+          # gpg --no-tty --batch で非対話モード (/dev/tty エラー回避)
+          sudo gpg --no-tty --batch --yes --dearmor -o /usr/share/keyrings/google-chrome.gpg < /tmp/google-chrome.key
           echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable xvfb
