@@ -20,11 +20,17 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install Chromium
+      - name: Install Google Chrome (stable, deb版 - snap版は壊れている)
         run: |
           sudo apt-get update
-          sudo apt-get install -y chromium-browser xvfb
-          chromium --version
+          # snap 版 chromium があれば削除
+          sudo snap remove chromium 2>/dev/null || true
+          # Google Chrome (deb版) をインストール
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable xvfb
+          google-chrome --version
 
       - name: Install Python dependencies
         run: |
@@ -40,8 +46,6 @@ jobs:
       - name: "Restore seed data (skip already-fetched URLs)"
         run: |
           mkdir -p output
-          # ローカルで集めた data_cache_w*.json を output/ にコピー
-          # ワーカーは起動時に自分のファイルを読み込んで既取得 URL をスキップする
           if ls seed/data_cache_w*.json 1> /dev/null 2>&1; then
             cp -n seed/data_cache_w*.json output/
             echo "Seed restored:"
@@ -53,8 +57,8 @@ jobs:
       - name: "Phase 1 - URL collect"
         run: python scraper.py --collect
 
-      - name: "Phase 2 - fetch services (parallel, 5 workers to match seed round-robin)"
-        run: python scraper.py --fetch --workers 5
+      - name: "Phase 2 - fetch services (parallel, 3 workers)"
+        run: python scraper.py --fetch --workers 3
 
       - name: "Phase 3 - generate Excel"
         run: python scraper.py --excel
