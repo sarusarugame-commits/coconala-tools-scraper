@@ -272,13 +272,17 @@ def fetch_service(page: ChromiumPage, url: str) -> Service | None:
     time.sleep(0.5)
 
     # 販売実績数: ページ本文から「販売実績 N件」(この商品の販売数) を抽出。
-    # ※「販売実績 0」(出品者プロファイル側の累計) は "件" が付かないので区別できる。
+    # 重要: 「販売実績」を厳密にマッチ。出品者プロファイル側の累計 (例: 累計販売 3,000件) や
+    #       レビュー数・売上金額などは誤抽出の原因になるため除外。
     sales_count = 0
     try:
         text = page.run_js("() => document.body.innerText || ''") or ""
-        m = re.search(r"販売.{0,5}?([\d,]+)\s*件", text)
+        # 1次: 「販売実績 N件」(この商品の販売数) - 厳密マッチ
+        m = re.search(r"販売実績\s*([\d,]+)\s*件", text)
+        # 2次: 「販売数 N件」「売上数 N」など別表現 (この商品用)
         if not m:
-            m = re.search(r"販売.{0,5}?([\d,]+)", text)
+            m = re.search(r"販売数\s*([\d,]+)\s*件", text)
+        # 3次: 売上数 (金額ではなく販売件数の意味で使われている場合)
         if not m:
             m = re.search(r"売上数\s*([\d,]+)", text)
         if m:
